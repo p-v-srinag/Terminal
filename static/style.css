@@ -1,0 +1,101 @@
+/* ================== Global ================== */
+body {
+    font-family: monospace;
+    background-color: #0d1117; /* Dark GitHub-style background */
+    color: #c9d1d9;           /* Light text */
+    margin: 0;
+    padding: 0;
+}
+
+/* ================== Terminal ================== */
+#terminal {
+    background-color: #010409; /* Dark terminal background */
+    color: #e1ff00f5;          /* Neon green/yellow text */
+    border-radius: 5px;
+    padding: 10px;
+    height: 400px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    font-size: 14px;
+    outline: none;
+    box-shadow: 0 0 10px #0f0f0f inset;
+}
+
+/* ================== System Stats ================== */
+#stats {
+    background-color: #21262d; /* Slightly lighter than terminal */
+    color: #c9d1d9;
+    padding: 10px;
+    border-radius: 5px;
+    font-size: 13px;
+    box-shadow: 0 0 5px #0f0f0f inset;
+}
+
+/* ================== Input File Button ================== */
+#fileUpload {
+    background-color: #161b22;
+    color: #c9d1d9;
+    border-radius: 5px;
+    border: 1px solid #30363d;
+}
+
+/* ================== Buttons ================== */
+button {
+    font-family: monospace;
+    font-size: 13px;
+    border-radius: 5px;
+}
+
+/* ================== Scrollbar Styling ================== */
+#terminal::-webkit-scrollbar {
+    width: 8px;
+}
+
+#terminal::-webkit-scrollbar-track {
+    background: #010409;
+}
+
+#terminal::-webkit-scrollbar-thumb {
+    background-color: #30363d;
+    border-radius: 4px;
+}
+
+#stats::-webkit-scrollbar {
+    width: 6px;
+}
+
+#stats::-webkit-scrollbar-track {
+    background: #21262d;
+}
+
+#stats::-webkit-scrollbar-thumb {
+    background-color: #484f58;
+    border-radius: 3px;
+}
+
+/* ================== Theme Toggle Classes ================== */
+.dark-theme {
+    background-color: #0d1117;
+    color: #c9d1d9;
+}
+
+.light-theme {
+    background-color: #f6f8fa;
+    color: #0d1117;
+}
+
+.light-theme #terminal {
+    background-color: #eaecef;
+    color: #0366d6;
+}
+
+.light-theme #stats {
+    background-color: #d8d8d8;
+    color: #0d1117;
+}
+
+/* ================== Misc ================== */
+a {
+    color: #58a6ff;
+    text-decoration: none;
+}
