@@ -3,6 +3,8 @@ import sqlite3
 import subprocess
 import psutil
 import math
+import json
+import requests
 from flask import Flask, render_template, request, jsonify, g, session, send_from_directory
 from werkzeug.utils import secure_filename
 
@@ -28,15 +30,16 @@ def close_db(exception):
         db.close()
 
 def init_db():
-    db = get_db()
-    db.execute("""
-        CREATE TABLE IF NOT EXISTS history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            command TEXT NOT NULL,
-            output TEXT NOT NULL
-        )
-    """)
-    db.commit()
+    with app.app_context():
+        db = get_db()
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                command TEXT NOT NULL,
+                output TEXT NOT NULL
+            )
+        """)
+        db.commit()
 
 # ================== SESSION & HELPERS ==================
 def get_cwd():
@@ -56,7 +59,6 @@ def run_math(command):
         return None
 
 def simulate_pip(command):
-    """Simulate pip install."""
     parts = command.split()
     if len(parts) >= 3 and parts[0] == "pip" and parts[1] == "install":
         packages = parts[2:]
@@ -72,15 +74,13 @@ def run_command(cmd):
     parts = cmd.split()
     first = parts[0].lower()
 
-    # ================== Built-in commands ==================
     if first == "cd":
         target = parts[1] if len(parts) > 1 else os.path.expanduser("~")
         new_path = os.path.abspath(os.path.join(get_cwd(), target))
         if os.path.isdir(new_path) and new_path.startswith(BASE_DIR):
             set_cwd(new_path)
             return f"📂 Changed directory to {new_path}"
-        else:
-            return f"❌ No such directory: {target}"
+        return f"❌ No such directory: {target}"
 
     elif first == "pwd":
         return get_cwd()
@@ -89,7 +89,7 @@ def run_command(cmd):
         path = get_cwd() if len(parts) == 1 else os.path.join(get_cwd(), parts[1])
         try:
             files = os.listdir(path)
-            return "\n".join(files)
+            return "\n".join(files) if files else "Empty directory"
         except Exception as e:
             return f"⚠️ Error: {e}"
 
@@ -98,37 +98,37 @@ def run_command(cmd):
 
     elif first == "history":
         db = get_db()
-        rows = db.execute("SELECT command FROM history ORDER BY id DESC LIMIT 50").fetchall()
-        return "\n".join([row["command"] for row in reversed(rows)])
+        rows = db.execute("SELECT command FROM history ORDER BY id ASC").fetchall()
+        return "\n".join([row["command"] for row in rows])
 
-    # ================== File commands ==================
     elif first == "mkdir":
         try:
             path = os.path.join(get_cwd(), parts[1])
             os.makedirs(path, exist_ok=True)
-            return f"📂 Directory '{parts[1]}' created successfully."
+            return f"📂 Directory '{parts[1]}' created."
         except Exception as e:
             return f"⚠️ {e}"
 
-    elif first in ["rmdir", "rm", "del"]:
-        try:
+    elif first == "rm":
+         try:
             path = os.path.join(get_cwd(), parts[1])
             if os.path.isdir(path):
-                os.rmdir(path)
-                return f"🗑️ Directory '{parts[1]}' deleted successfully."
+                import shutil
+                shutil.rmtree(path)
+                return f"🗑️ Directory '{parts[1]}' deleted."
             elif os.path.isfile(path):
                 os.remove(path)
-                return f"🗑️ File '{parts[1]}' deleted successfully."
+                return f"🗑️ File '{parts[1]}' deleted."
             else:
                 return f"❌ No such file or directory: {parts[1]}"
-        except Exception as e:
+         except Exception as e:
             return f"⚠️ {e}"
 
     elif first == "touch":
         try:
             path = os.path.join(get_cwd(), parts[1])
             open(path, "a").close()
-            return f"📝 File '{parts[1]}' created successfully."
+            return f"📝 File '{parts[1]}' created."
         except Exception as e:
             return f"⚠️ {e}"
 
@@ -140,38 +140,30 @@ def run_command(cmd):
         except Exception as e:
             return f"⚠️ {e}"
 
-    elif first in ["mv", "cp"]:
-        try:
-            src = os.path.join(get_cwd(), parts[1])
-            dest = os.path.join(get_cwd(), parts[2])
-            if first == "mv":
-                os.rename(src, dest)
-                return f"📂 Moved '{parts[1]}' to '{parts[2]}'."
-            else:
-                import shutil
-                if os.path.isdir(src):
-                    shutil.copytree(src, dest)
-                else:
-                    shutil.copy2(src, dest)
-                return f"📄 Copied '{parts[1]}' to '{parts[2]}'."
-        except Exception as e:
-            return f"⚠️ {e}"
+    elif first == "nano":
+        if len(parts) > 1:
+            file_path = os.path.join(get_cwd(), parts[1])
+            try:
+                with open(file_path, "r") as f:
+                    return f.read()
+            except FileNotFoundError:
+                return "" # Return empty for new file
+            except Exception as e:
+                return f"⚠️ Error: {e}"
+        return "Usage: nano <filename>"
 
-    # ================== Pip simulation ==================
     pip_result = simulate_pip(cmd)
     if pip_result:
         return pip_result
-
-    # ================== Math expressions ==================
+        
     math_result = run_math(cmd)
     if math_result is not None:
         return f"🧮 {math_result}"
 
-    # ================== Default shell ==================
     try:
         result = subprocess.run(cmd, shell=True, cwd=get_cwd(),
-                                capture_output=True, text=True, timeout=5)
-        return result.stdout.strip() or result.stderr.strip() or f"✅ Command '{cmd}' executed successfully."
+                                capture_output=True, text=True, timeout=10)
+        return result.stdout.strip() or result.stderr.strip() or f"✅ Command '{cmd}' executed."
     except Exception as e:
         return f"⚠️ {e}"
 
@@ -180,52 +172,64 @@ def run_command(cmd):
 def index():
     return render_template("index.html")
 
-@app.route("/stats")
-def stats():
-    processes = [p.info for p in psutil.process_iter(['pid', 'name', 'cpu_percent'])][:5]
-    return jsonify({
-        "cpu": psutil.cpu_percent(),
-        "memory": psutil.virtual_memory().percent,
-        "disk": psutil.disk_usage("/").percent,
-        "processes": processes
-    })
-
 @app.route("/run", methods=["POST"])
 def run():
     data = request.get_json()
     command = data.get("command", "").strip()
     output = run_command(command)
-
-    db = get_db()
-    db.execute("INSERT INTO history (command, output) VALUES (?, ?)", (command, output))
-    db.commit()
-
+    if command.lower() != 'history':
+        db = get_db()
+        db.execute("INSERT INTO history (command, output) VALUES (?, ?)", (command, output))
+        db.commit()
     return jsonify({"output": output})
+    
+@app.route('/interpret', methods=['POST'])
+def interpret_command():
+    data = request.json
+    natural_language_query = data.get('query')
 
-@app.route("/history")
-def history():
-    db = get_db()
-    rows = db.execute("SELECT command, output FROM history ORDER BY id DESC LIMIT 50").fetchall()
-    return jsonify([dict(row) for row in rows])
+    if not natural_language_query:
+        return jsonify({'error': 'No query provided'}), 400
 
-# ================== File Upload/Download ==================
-@app.route("/upload", methods=["POST"])
-def upload():
-    if 'file' not in request.files:
-        return jsonify({"output": "❌ No file part"})
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"output": "❌ No selected file"})
-    filename = secure_filename(file.filename)
-    file.save(os.path.join(UPLOAD_FOLDER, filename))
-    return jsonify({"output": f"📄 File '{filename}' uploaded successfully."})
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+         return jsonify({'error': 'API key not configured. Set GEMINI_API_KEY environment variable.'}), 500
 
-@app.route("/download/<filename>")
-def download(filename):
-    return send_from_directory(UPLOAD_FOLDER, filename, as_attachment=True)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
+    
+    system_prompt = (
+        "You are an expert command-line terminal assistant. "
+        "Your task is to translate natural language queries into a single, executable shell command for a Linux environment. "
+        "Only return the shell command itself, with no explanation, decoration, or extra text. "
+        "For example, if the user says 'create a file called test.txt', you should only output 'touch test.txt'."
+    )
+    
+    payload = {
+        "contents": [{"parts": [{"text": natural_language_query}]}],
+        "system_instruction": {"parts": [{"text": system_prompt}]}
+    }
+
+    try:
+        response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'})
+        response.raise_for_status()
+        result = response.json()
+        command = result['candidates'][0]['content']['parts'][0]['text'].strip()
+        return jsonify({'command': command})
+    except requests.exceptions.RequestException as e:
+        return jsonify({'error': str(e)}), 500
+    except (KeyError, IndexError) as e:
+        return jsonify({'error': 'Failed to parse AI response'}), 500
+
+@app.route('/save', methods=['POST'])
+def save_file():
+    data = request.json
+    file_path = os.path.join(get_cwd(), data['filename'])
+    with open(file_path, 'w') as f:
+        f.write(data['content'])
+    return jsonify({'output': f"File '{data['filename']}' saved."})
 
 # ================== MAIN ==================
 if __name__ == "__main__":
-    with app.app_context():
-        init_db()
+    init_db()
     app.run(host="0.0.0.0", port=5050, debug=True)
+

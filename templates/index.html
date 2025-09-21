@@ -3,47 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>⚡ Web Terminal Dashboard</title>
-<style>
-body {
-  font-family: monospace;
-  background: #0d1117;
-  color: #c9d1d9;
-  margin: 0; padding: 0;
-}
-#terminal {
-  background: #010409;
-  color: #e1ff00;
-  padding: 10px;
-  height: 500px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  font-size: 14px;
-  outline: none;
-}
-.prompt { color: #58a6ff; }
-.cursor {
-  display: inline-block;
-  width: 8px;
-  height: 16px;
-  background: #e1ff00;
-  animation: blink 1s step-start infinite;
-}
-@keyframes blink {
-  50% { background: transparent; }
-}
-.suggestions { color:#58a6ff; font-size:12px; }
-.editor, .game-area {
-  background: #111;
-  color: #0f0;
-  padding: 5px;
-  margin: 5px 0;
-  border: 1px solid #444;
-  height: 200px;
-  overflow-y: auto;
-  white-space: pre;
-}
-.selected { background: #444; }
-</style>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 <div id="terminal" tabindex="0"></div>
@@ -56,13 +16,15 @@ let currentCommand = "";
 let cursorPos = 0;
 let mode = "terminal"; // terminal | editor | game
 let editorContent = "";
+let currentFile = "";
 let gameMenuIndex = 0;
+const gameList = ["Snake", "Tetris", "2048"];
 const commandsList = ["ls","cd","pwd","mkdir","rmdir","rm","touch","cat","echo","mv","cp","history","clear","sudo","pip install","python3","nano","vim","date","whoami","game"];
 
 function newPrompt() {
   const line = document.createElement("div");
   line.classList.add("line");
-  line.innerHTML = `<span class="prompt">$ </span><span class="current-command"></span><span class="cursor"></span><span class="suggestions"></span>`;
+  line.innerHTML = `<span class="prompt">$ </span><span class="command-input"><span class="current-command"></span><span class="cursor"></span></span><span class="suggestion-inline"></span>`;
   terminal.appendChild(line);
   cursorPos = 0;
   scrollTerminal();
@@ -70,33 +32,62 @@ function newPrompt() {
 function scrollTerminal() { terminal.scrollTop = terminal.scrollHeight; }
 
 function renderCommand() {
-  const line = document.querySelector(".line:last-child");
-  const cmdElem = line.querySelector(".current-command");
-  const cursor = line.querySelector(".cursor");
-  const left = currentCommand.slice(0, cursorPos);
-  const right = currentCommand.slice(cursorPos);
-  cmdElem.textContent = left;
-  cmdElem.appendChild(cursor);
-  cursor.insertAdjacentText("afterend", right);
+    const line = document.querySelector(".line:last-child");
+    if (!line) return;
+
+    const cmdElem = line.querySelector(".current-command");
+    const cursor = line.querySelector(".cursor");
+    const suggestionElem = line.querySelector(".suggestion-inline");
+
+    const left = currentCommand.slice(0, cursorPos);
+    const right = currentCommand.slice(cursorPos);
+    
+    // Clear previous content and rebuild
+    cmdElem.innerHTML = ''; 
+    cmdElem.appendChild(document.createTextNode(left));
+    cmdElem.appendChild(cursor);
+    cmdElem.appendChild(document.createTextNode(right));
+
+    // Inline suggestion logic
+    if (currentCommand && cursorPos === currentCommand.length) {
+        const suggestion = commandsList.find(c => c.startsWith(currentCommand.toLowerCase()) && c.length > currentCommand.length);
+        if (suggestion) {
+            suggestionElem.textContent = suggestion.slice(currentCommand.length);
+        } else {
+            suggestionElem.textContent = "";
+        }
+    } else {
+        suggestionElem.textContent = "";
+    }
 }
+
 
 // Fake local executor
 async function executeCommand(cmd) {
-  const line = document.querySelector(".line:last-child");
-  line.querySelector(".cursor").remove();
-  line.querySelector(".suggestions").remove();
-  line.querySelector(".current-command").textContent = cmd;
+    const line = document.querySelector(".line:last-child");
+    if (line) {
+        const commandInput = line.querySelector(".command-input");
+        if(commandInput) {
+             commandInput.remove();
+        }
+        const suggestionElem = line.querySelector(".suggestion-inline");
+        if(suggestionElem) suggestionElem.remove();
+        line.insertAdjacentHTML('beforeend', `<span class="current-command">${cmd}</span>`);
+    }
+
 
   let output = "";
+  if (cmd.trim() && cmd.toLowerCase() !== 'history') history.push(cmd);
+  historyIndex = history.length;
+
   if (cmd === "clear") {
     terminal.innerHTML = "";
-    history.push(cmd);
-    historyIndex = history.length;
     newPrompt();
+    currentCommand = "";
     return;
   }
   else if (cmd === "history") {
-    output = history.join("\n");
+    output = history.slice(0, -1).join("\n");
   }
   else if (cmd === "date") {
     output = new Date().toString();
@@ -105,11 +96,33 @@ async function executeCommand(cmd) {
     output = "guest@web-terminal";
   }
   else if (cmd.startsWith("nano") || cmd.startsWith("vim")) {
-    startEditor();
+    const parts = cmd.split(" ");
+    if (parts.length > 1) {
+        currentFile = parts[1];
+        const res = await fetch("/run", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({command: cmd})
+        });
+        const data = await res.json();
+        editorContent = data.output;
+        startEditor();
+    } else {
+        output = `Usage: ${parts[0]} <filename>`;
+    }
+    if (output) {
+        const outDiv = document.createElement("div");
+        outDiv.textContent = output;
+        terminal.appendChild(outDiv);
+        newPrompt();
+    }
+    currentCommand = "";
     return;
+
   }
   else if (cmd === "game") {
     startGameMenu();
+    currentCommand = "";
     return;
   }
   else {
@@ -128,30 +141,40 @@ async function executeCommand(cmd) {
     outDiv.textContent = output;
     terminal.appendChild(outDiv);
   }
-
-  if (cmd.trim()) history.push(cmd);
-  historyIndex = history.length;
   newPrompt();
   currentCommand = "";
 }
 
 // Editor mode
 function startEditor() {
-  mode = "editor";
-  const editor = document.createElement("div");
-  editor.className = "editor";
-  editor.textContent = editorContent;
-  terminal.appendChild(editor);
-  scrollTerminal();
+    mode = "editor";
+    const editor = document.createElement("textarea");
+    editor.className = "editor";
+    editor.value = editorContent;
+    terminal.appendChild(editor);
+    editor.focus();
+    scrollTerminal();
 }
-function exitEditor() {
-  mode = "terminal";
-  const saveMsg = document.createElement("div");
-  saveMsg.textContent = "[ File saved! ]";
-  terminal.appendChild(saveMsg);
-  editorContent = "";
-  newPrompt();
+async function exitEditor() {
+    mode = "terminal";
+    const editor = document.querySelector(".editor");
+    editorContent = editor.value;
+    const res = await fetch("/save", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({filename: currentFile, content: editorContent})
+    });
+    const data = await res.json();
+    
+    editor.remove(); // Remove editor before adding message
+    const saveMsg = document.createElement("div");
+    saveMsg.textContent = data.output;
+    terminal.appendChild(saveMsg);
+    
+    currentCommand = ""; // Clear command after exit
+    newPrompt();
 }
+
 
 // Game menu
 function startGameMenu() {
@@ -159,69 +182,100 @@ function startGameMenu() {
   const gameDiv = document.createElement("div");
   gameDiv.className = "game-area";
   gameDiv.id = "gameMenu";
-  gameDiv.innerHTML = renderGameMenu();
   terminal.appendChild(gameDiv);
+  renderGameMenu();
   scrollTerminal();
 }
 function renderGameMenu() {
-  const games = ["Snake","Tetris","2048"];
-  return games.map((g,i)=> (i===gameMenuIndex?"> ":"  ")+g).join("\n");
+    const gameMenu = document.getElementById("gameMenu");
+    if (!gameMenu) return;
+    gameMenu.innerHTML = "Select a game:\n" + gameList.map((game, index) => {
+        return `  ${index === gameMenuIndex ? '>>' : '  '} ${game}`;
+    }).join("\n");
+}
+function exitGame(message) {
+    const gameArea = document.querySelector(".game-area");
+    if(gameArea) gameArea.remove();
+
+    const msgDiv = document.createElement("div");
+    msgDiv.textContent = message;
+    terminal.appendChild(msgDiv);
+
+    mode = "terminal";
+    newPrompt();
 }
 function startSnake() {
-  const snakeDiv = document.createElement("div");
-  snakeDiv.className = "game-area";
-  snakeDiv.textContent = "[ Snake game placeholder 🐍 ]";
-  terminal.appendChild(snakeDiv);
-  newPrompt();
-  mode="terminal";
+    exitGame("[ Snake game placeholder 🐍. Press any key to exit. ]");
 }
+
 
 /* KEY HANDLING */
 terminal.addEventListener("keydown", async (e)=>{
   if (mode==="editor") {
-    if (e.key.length===1) editorContent += e.key;
-    else if (e.key==="Backspace") editorContent=editorContent.slice(0,-1);
-    else if (e.key==="Escape" || (e.ctrlKey && e.key==="s")) exitEditor();
-    document.querySelector(".editor").textContent = editorContent;
-    e.preventDefault(); return;
+    if (e.key==="Escape" || (e.ctrlKey && e.key==="s")) {
+        e.preventDefault();
+        await exitEditor();
+    }
+    return;
   }
   if (mode==="game") {
-    if (e.key==="ArrowUp" && gameMenuIndex>0) gameMenuIndex--;
-    if (e.key==="ArrowDown" && gameMenuIndex<2) gameMenuIndex++;
-    if (e.key==="Enter") {
-      if (gameMenuIndex===0) startSnake();
-      else {
-        const div = document.createElement("div");
-        div.className="game-area";
-        div.textContent="[ Game not implemented yet ]";
-        terminal.appendChild(div);
-        newPrompt();
-        mode="terminal";
-      }
+    e.preventDefault();
+    if (e.key==="ArrowUp" && gameMenuIndex > 0) {
+        gameMenuIndex--;
+        renderGameMenu();
+    } else if (e.key==="ArrowDown" && gameMenuIndex < gameList.length - 1) {
+        gameMenuIndex++;
+        renderGameMenu();
+    } else if (e.key === "Enter") {
+        switch(gameMenuIndex) {
+            case 0: // Snake
+                startSnake();
+                break;
+            default:
+                exitGame(`[ ${gameList[gameMenuIndex]} is not implemented yet. ]`);
+                break;
+        }
+    } else if (e.key === "Escape") {
+        exitGame("[ Exited game menu. ]");
     }
-    document.getElementById("gameMenu").textContent = renderGameMenu();
-    e.preventDefault(); return;
+    return;
   }
 
   e.preventDefault();
-  if(e.key.length===1){ 
+  const suggestionText = document.querySelector(".suggestion-inline")?.textContent || "";
+  if(e.key.length===1){
     currentCommand = currentCommand.slice(0,cursorPos)+e.key+currentCommand.slice(cursorPos);
-    cursorPos++; 
+    cursorPos++;
   }
-  else if(e.key==="Backspace" && cursorPos>0){ 
-    currentCommand = currentCommand.slice(0,cursorPos-1)+currentCommand.slice(cursorPos); 
-    cursorPos--; 
+  else if(e.key==="Backspace" && cursorPos>0){
+    currentCommand = currentCommand.slice(0,cursorPos-1)+currentCommand.slice(cursorPos);
+    cursorPos--;
   }
   else if(e.key==="ArrowLeft" && cursorPos>0){ cursorPos--; }
-  else if(e.key==="ArrowRight" && cursorPos<currentCommand.length){ cursorPos++; }
+  else if(e.key==="ArrowRight"){ 
+      if (cursorPos < currentCommand.length) {
+          cursorPos++;
+      } else if (suggestionText) {
+          // Accept suggestion with right arrow at the end
+          currentCommand += suggestionText;
+          cursorPos = currentCommand.length;
+      }
+  }
+  else if (e.key === "Tab") {
+        if (suggestionText) {
+            currentCommand += suggestionText;
+            cursorPos = currentCommand.length;
+        }
+  }
   else if(e.key==="Enter"){ await executeCommand(currentCommand); }
-  else if(e.key==="ArrowUp"){ if(historyIndex>0){ historyIndex--; currentCommand=history[historyIndex]; cursorPos=currentCommand.length; } }
-  else if(e.key==="ArrowDown"){ if(historyIndex<history.length-1){ historyIndex++; currentCommand=history[historyIndex]; cursorPos=currentCommand.length; } else { historyIndex=history.length; currentCommand=""; cursorPos=0; } }
+  else if(e.key==="ArrowUp"){ if(historyIndex>0){ historyIndex--; currentCommand=history[historyIndex-1] || ""; cursorPos=currentCommand.length; } }
+  else if(e.key==="ArrowDown"){ if(historyIndex<history.length){ historyIndex++; currentCommand=history[historyIndex] || ""; cursorPos=currentCommand.length; } else { currentCommand=""; cursorPos=0; } }
 
   renderCommand();
 });
 
 newPrompt();
+currentCommand = "";
 terminal.focus();
 terminal.addEventListener("click",()=>terminal.focus());
 </script>
