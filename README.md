@@ -32,4 +32,8 @@ This project is a web-based terminal application built with Flask and JavaScript
     ```
 4.  Open your web browser and navigate to `http://127.0.0.1:5050`.
 
+
 ---
+<img width="1464" height="834" alt="Screenshot 2025-09-21 at 3 24 05 PM" src="https://github.com/user-attachments/assets/5b8f4f7b-99e5-4140-a106-089a524f901b" />
+<img width="1457" height="782" alt="Screenshot 2025-09-21 at 3 24 26 PM" src="https://github.com/user-attachments/assets/c1af4c1f-e1f7-43e4-9838-5c356792739f" />
+
